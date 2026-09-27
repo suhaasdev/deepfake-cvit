@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deepfake Detection — frequency-domain CViT demo</title>
+  <meta name="description" content="Dual-branch pipeline demo: spatial patches + 2D-FFT/DCT spectra feeding a CViT-style scorer, with Grad-CAM-style interpretability and a cross-dataset ROC curve." />
+  <link rel="stylesheet" href="../assets/css/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <div class="crumbs"><a href="../index.html">← Portfolio</a> / Deepfake CViT</div>
+
+    <section>
+      <div class="kicker">02 · Computer vision</div>
+      <h1>Deepfake Detection (Frequency-Domain CViT)</h1>
+      <p class="lede">
+        The production pipeline splits preprocessing into a spatial branch (RGB patches) and a
+        frequency branch (2D-FFT / DCT magnitudes, where GAN upsampling leaves periodic
+        fingerprints), fused by a Convolutional Vision Transformer. This demo reimplements the
+        frequency branch honestly in JavaScript: pick any real or fake sample, inspect its
+        magnitude spectrum and DCT energy, and see the detector's verdict with an interpretability
+        overlay — then check the ROC over a seeded evaluation set.
+      </p>
+      <div class="row" style="margin-top: 14px;">
+        <span class="badge acc">2D-FFT / DCT</span>
+        <span class="badge">CViT-style scorer</span>
+        <span class="badge">Grad-CAM-style overlay</span>
+        <span class="badge">ROC-AUC eval</span>
+        <span class="badge">cross-dataset test</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Interactive inference</h2>
+      <div class="grid c2">
+        <div class="panel">
+          <h3>Sample</h3>
+          <div class="row" style="margin-bottom: 10px;">
+            <select id="pick" style="flex:1;">
+              <option value="real">Sample A — "real" (natural texture)</option>
+              <option value="fake" selected>Sample B — "GAN fake" (upsampling fingerprint)</option>
+            </select>
+            <button class="btn ghost sm" id="reroll">↻ re-roll</button>
+          </div>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <figure style="flex:1; min-width:180px; margin:0;">
+              <canvas id="spatial" class="vis" width="192" height="192"></canvas>
+              <figcaption style="font-size:11.5px; color:var(--dim); margin-top:6px;">spatial branch (RGB patch)</figcaption>
+            </figure>
+            <figure style="flex:1; min-width:180px; margin:0;">
+              <canvas id="freq" class="vis" width="192" height="192"></canvas>
+              <figcaption style="font-size:11.5px; color:var(--dim); margin-top:6px;">frequency branch (log |DFT|, centered)</figcaption>
+            </figure>
+          </div>
+          <div class="note" style="margin-bottom:0;">
+            The fake's checkerboard fingerprint appears as <b>discrete off-center peaks</b> in the
+            magnitude spectrum — exactly the periodic upsampling artifact the CViT learns to spot.
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Verdict</h3>
+          <div class="verdict fake" id="verdict">
+            <span class="score" id="v-score">—</span>
+            <span class="label" id="v-label">run an inference…</span>
+          </div>
+          <div class="scorebar" style="margin:12px 0 4px;"><div id="v-bar" style="width:0%"></div></div>
+          <div style="font-size:12px; color:var(--dim); margin-bottom:12px;">real ← 0 · fake probability → 1</div>
+
+          <h3>Interpretability</h3>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <figure style="flex:1; min-width:180px; margin:0;">
+              <canvas id="gradcam" class="vis" width="192" height="192"></canvas>
+              <figcaption style="font-size:11.5px; color:var(--dim); margin-top:6px;">Grad-CAM-style attribution (spatial)</figcaption>
+            </figure>
+            <figure style="flex:1; min-width:180px; margin:0;">
+              <div id="radial-chart"></div>
+              <figcaption style="font-size:11.5px; color:var(--dim); margin-top:6px;">radial |DFT| profile — peakiness drives the score</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Quantitative evaluation <span class="badge ok" id="eval-status">ready</span></h2>
+      <div class="row" style="margin: 10px 0 16px;">
+        <button class="btn sm" id="run-eval">Run 64-sample ROC eval</button>
+      </div>
+      <div class="grid c2">
+        <div class="panel" id="roc-panel">
+          <h3>ROC — held-out set</h3>
+          <div id="roc-chart" style="display:flex; justify-content:center;"></div>
+        </div>
+        <div class="panel">
+          <h3>Cross-dataset story</h3>
+          <table class="metrics">
+            <thead><tr><th>Model variant</th><th>In-domain AUC</th><th>Cross-dataset AUC</th></tr></thead>
+            <tbody id="xd-table"></tbody>
+          </table>
+          <div class="note" style="margin-top:14px;">
+            The spectral-only scorer transfers better across "datasets" (here: different texture
+            seeds) than the pixel-statistics baseline — mirroring the published result that
+            frequency features generalize where spatial artifacts overfit. The gap between the two
+            AUC columns <b>is</b> the honest generalization metric the README leads with.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Architecture</h2>
+      <div class="panel">
+        <div class="arch-flow">Raw video/image → <i>Frame extraction</i> (OpenCV in prod)
+        → <i>Preprocessing branch split</i>
+            ├─ Spatial:  normalized RGB patches
+            └─ Frequency: 2D-FFT / DCT magnitude per patch   ← <b>reimplemented here</b>
+        → <i>CViT backbone</i>: CNN stem → Transformer encoder  ← <b>spectral scorer here</b>
+        → <i>Classification head</i>: real/fake + confidence
+        → <i>Grad-CAM</i> + spectrum visualization             ← <b>attribution overlay here</b>
+                        ↓
+        <b>Eval</b>: ROC-AUC · cross-dataset generalization (train FF++ → test Celeb-DF)</div>
+      </div>
+      <div class="note">
+        <b>Production mapping.</b> Training uses FaceForensics++ with Celeb-DF held out; the FastAPI
+        inference endpoint accepts a video and returns per-frame heatmaps. This demo's synthetic
+        generator (smooth 1/f² texture = "real", plus a periodic fingerprint = "fake") is a
+        controlled stand-in so the whole frequency-domain pipeline is inspectable without a GPU.
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/main.js"></script>
+  <script src="lab.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
